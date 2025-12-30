@@ -108,7 +108,12 @@ def generate_podcast_endpoint(data: dict):
         }
 
         # None entfernen, damit generate_podcast sauber entscheidet
-        gp_kwargs = {k: v for k, v in gp_kwargs.items() if v is not None}
+        gp_kwargs = {
+            k: v
+            for k, v in gp_kwargs.items()
+            if v not in (None, "", [], {})
+        }
+
 
         logger.info("generate_podcast inputs: %s", {k: ("<set>" if v else v) for k, v in gp_kwargs.items() if k != "conversation_config"})
 
