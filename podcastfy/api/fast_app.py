@@ -17,9 +17,9 @@ logger = logging.getLogger("podcastfy")
 logging.basicConfig(level=logging.INFO)
 
 def load_base_config() -> Dict[Any, Any]:
-    # In deinem Original ist der Pfad etwas komisch verschachtelt. Lass es so, wie es bei dir funktioniert.
-    config_path = Path(__file__).parent / "podcastfy" / "conversation_config.yaml"
     try:
+        base_dir = Path(__file__).resolve().parents[1]  # /app/podcastfy
+        config_path = base_dir / "conversation_config.yaml"
         with open(config_path, "r", encoding="utf-8") as file:
             return yaml.safe_load(file)
     except Exception as e:
