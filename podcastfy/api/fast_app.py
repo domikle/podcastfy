@@ -54,59 +54,42 @@ def _set_env_if_present(env_name: str, value: Any) -> None:
 
 
 def _set_env_alias_if_present(target: str, source: str) -> None:
-    """
-    If `target` is not set but `source` is set, copy it.
-    Useful for users who already have ELEVENLABS_KEY etc.
-    """
+    # if target not set but source set, copy it
     if not os.getenv(target) and os.getenv(source):
         os.environ[target] = os.environ[source]
 
 
-def _clean_value(v: Any) -> Any:
-    if v is None:
-        return None
-    if isinstance(v, str):
-        s = v.strip()
-        return s if s else None
-    if isinstance(v, list):
-        out = []
-        for x in v:
-            cx = _clean_value(x)
-            if cx is None:
-                continue
-            out.append(cx)
-        return out if out else None
-    if isinstance(v, dict):
-        out = {k: _clean_value(val) for k, val in v.items()}
-        out = {k: val for k, val in out.items() if val is not None}
-        return out if out else None
-    return v
-
-
 def _parse_voice(value: Any) -> Optional[Union[str, Dict[str, str]]]:
     """
-    Accept:
-      - "Rachel" (name)
-      - "21m00Tcm4TlvDq8ikWAM" (voice_id as string)
-      - {"voice_id": "..."} or {"id": "..."} or {"name": "..."}
+    Supports:
+      - "Rachel" (voice name)
+      - "21m00Tcm4TlvDq8ikWAM" (voice_id as plain string)
+      - {"voice_id": "..."} / {"id": "..."} / {"name": "..."}
     Returns:
-      - string (name or id) OR dict {"voice_id": "..."} when given as dict
+      - {"voice_id": "..."} when it looks like an id
+      - "Name" when it's a name
+      - None when empty
     """
     if value is None:
         return None
 
     if isinstance(value, dict):
         vid = value.get("voice_id") or value.get("id")
-        vname = value.get("name")
         if isinstance(vid, str) and vid.strip():
             return {"voice_id": vid.strip()}
-        if isinstance(vname, str) and vname.strip():
-            return vname.strip()
+        name = value.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
         return None
 
     if isinstance(value, str):
         s = value.strip()
-        return s if s else None
+        if not s:
+            return None
+        # treat id-like strings as voice_id
+        if " " not in s and len(s) >= 10:
+            return {"voice_id": s}
+        return s
 
     return None
 
@@ -114,18 +97,17 @@ def _parse_voice(value: Any) -> Optional[Union[str, Dict[str, str]]]:
 @app.post("/generate")
 def generate_podcast_endpoint(data: dict):
     try:
-        # Keys nur setzen wenn vorhanden, sonst NoneType Crash
+        # API keys via request body (optional)
         _set_env_if_present("OPENAI_API_KEY", data.get("openai_key"))
         _set_env_if_present("GEMINI_API_KEY", data.get("google_key"))
-        _set_env_if_present("GOOGLE_API_KEY", data.get("google_key"))  # manche Libs erwarten GOOGLE_API_KEY
+        _set_env_if_present("GOOGLE_API_KEY", data.get("google_key"))
         _set_env_if_present("ELEVENLABS_API_KEY", data.get("elevenlabs_key"))
 
-        # ENV Alias: wenn User ELEVENLABS_KEY nutzt, mappen wir es automatisch
+        # ENV alias support
         _set_env_alias_if_present("ELEVENLABS_API_KEY", "ELEVENLABS_KEY")
 
         base_config = load_base_config()
 
-        # output_language Alias: du sendest "language": "de"
         output_language = (
             data.get("output_language")
             or data.get("language")
@@ -144,14 +126,13 @@ def generate_podcast_endpoint(data: dict):
         q_voice = _parse_voice(voices_in.get("question")) or _parse_voice(default_voices.get("question"))
         a_voice = _parse_voice(voices_in.get("answer")) or _parse_voice(default_voices.get("answer"))
 
-        # Optional: wenn du ids als string schicken willst, kannst du das auch als dict erzwingen
-        # Beispiel: {"voices": {"answer": {"voice_id": "..."}}}
         user_config = {
             "creativity": float(data.get("creativity", base_config.get("creativity", 0.7))),
             "conversation_style": data.get("conversation_style", base_config.get("conversation_style", [])),
             "roles_person1": data.get("roles_person1", base_config.get("roles_person1")),
             "roles_person2": data.get("roles_person2", base_config.get("roles_person2")),
             "dialogue_structure": data.get("dialogue_structure", base_config.get("dialogue_structure", [])),
+            # NOTE: API expects "name" (not podcast_name)
             "podcast_name": data.get("name", base_config.get("podcast_name")),
             "podcast_tagline": data.get("tagline", base_config.get("podcast_tagline")),
             "output_language": output_language,
@@ -181,10 +162,12 @@ def generate_podcast_endpoint(data: dict):
             "longform": bool(data.get("is_long_form", False)),
         }
 
-        # Inputs bereinigen: None, leere Strings, leere Listen/Dicts raus
-        gp_kwargs = _clean_value(gp_kwargs) or {}
-        if "conversation_config" not in gp_kwargs:
-            gp_kwargs["conversation_config"] = conversation_config
+        # remove None / empty values
+        gp_kwargs = {
+            k: v
+            for k, v in gp_kwargs.items()
+            if v not in (None, "", [], {})
+        }
 
         logger.info(
             "generate_podcast inputs: %s",
