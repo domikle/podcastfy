@@ -21,22 +21,40 @@ import copy
 
 import logging
 
-# Configure logging to show all levels and write to both file and console
-""" logging.basicConfig(
-    level=logging.DEBUG,  # Show all levels of logs
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('podcastfy.log'),  # Save to file
-        logging.StreamHandler()  # Print to console
-    ]
-) """
-
-
 logger = setup_logger(__name__)
 
 app = typer.Typer()
 
 os.environ["LANGCHAIN_TRACING_V2"] = "False"
+
+
+def _norm_str(v: Optional[Any]) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    # allow numbers etc
+    s = str(v).strip()
+    return s if s else None
+
+
+def _norm_str_list(v: Optional[Any]) -> Optional[List[str]]:
+    if v is None:
+        return None
+    if isinstance(v, list):
+        out = []
+        for x in v:
+            sx = _norm_str(x)
+            if sx:
+                out.append(sx)
+        return out if out else None
+    if isinstance(v, str):
+        # accept comma separated
+        parts = [p.strip() for p in v.split(",")]
+        out = [p for p in parts if p]
+        return out if out else None
+    return None
 
 
 def process_content(
@@ -58,6 +76,12 @@ def process_content(
     Process URLs, a transcript file, image paths, or raw text to generate a podcast or transcript.
     """
     try:
+        # Normalize user inputs
+        urls = _norm_str_list(urls)
+        image_paths = _norm_str_list(image_paths)
+        text = _norm_str(text)
+        topic = _norm_str(topic)
+
         if config is None:
             config = load_config()
 
@@ -67,6 +91,7 @@ def process_content(
         # Update with provided config if any
         if conversation_config:
             conv_config.configure(conversation_config)
+
         # Get output directories from conversation config
         tts_config = conv_config.get("text_to_speech", {})
         output_directories = tts_config.get("output_directories", {})
@@ -89,7 +114,7 @@ def process_content(
             )
 
             combined_content = ""
-            
+
             if urls:
                 logger.info(f"Processing {len(urls)} links")
                 contents = [content_extractor.extract_content(link) for link in urls]
@@ -193,9 +218,9 @@ def main(
         None, "--topic", "-tp", help="Topic to generate podcast about"
     ),
     longform: bool = typer.Option(
-        False, 
-        "--longform", 
-        "-lf", 
+        False,
+        "--longform",
+        "-lf",
         help="Generate long-form content (only available for text input without images)"
     ),
 ):
@@ -238,7 +263,13 @@ def main(
             if file:
                 urls_list.extend([line.strip() for line in file if line.strip()])
 
-            if not urls_list and not image_paths and not text and not topic:
+            # normalize CLI inputs before validation
+            urls_list = _norm_str_list(urls_list) or []
+            image_paths_n = _norm_str_list(image_paths)
+            text_n = _norm_str(text)
+            topic_n = _norm_str(topic)
+
+            if not urls_list and not image_paths_n and not text_n and not topic_n:
                 raise typer.BadParameter(
                     "No input provided. Use --url, --file, --transcript, --image, --text, or --topic."
                 )
@@ -249,12 +280,12 @@ def main(
                 generate_audio=not transcript_only,
                 config=config,
                 conversation_config=conversation_config,
-                image_paths=image_paths,
+                image_paths=image_paths_n,
                 is_local=is_local,
-                text=text,
+                text=text_n,
                 model_name=llm_model_name,
                 api_key_label=api_key_label,
-                topic=topic,
+                topic=topic_n,
                 longform=longform
             )
 
@@ -292,50 +323,32 @@ def generate_podcast(
 ) -> Optional[str]:
     """
     Generate a podcast or transcript from a list of URLs, a file containing URLs, a transcript file, or image files.
-
-    Args:
-        urls (Optional[List[str]]): List of URLs to process.
-        url_file (Optional[str]): Path to a file containing URLs, one per line.
-        transcript_file (Optional[str]): Path to a transcript file.
-        tts_model (Optional[str]): TTS model to use ('openai' [default], 'elevenlabs', 'edge', or 'gemini').
-        transcript_only (bool): Generate only a transcript without audio. Defaults to False.
-        config (Optional[Dict[str, Any]]): User-provided configuration dictionary.
-        conversation_config (Optional[Dict[str, Any]]): User-provided conversation configuration dictionary.
-        image_paths (Optional[List[str]]): List of image file paths to process.
-        is_local (bool): Whether to use a local LLM. Defaults to False.
-        text (Optional[str]): Raw text input to be processed.
-        llm_model_name (Optional[str]): LLM model name for content generation.
-        api_key_label (Optional[str]): Environment variable name for LLM API key.
-        topic (Optional[str]): Topic to generate podcast about.
-
-    Returns:
-        Optional[str]: Path to the final podcast audio file, or None if only generating a transcript.
     """
     try:
         print("Generating podcast...")
+
+        # Normalize API inputs
+        urls = _norm_str_list(urls) or []
+        image_paths = _norm_str_list(image_paths)
+        text = _norm_str(text)
+        topic = _norm_str(topic)
+
         # Load default config
         default_config = load_config()
 
         # Update config if provided
         if config:
             if isinstance(config, dict):
-                # Create a deep copy of the default config
                 updated_config = copy.deepcopy(default_config)
-                # Update the copy with user-provided values
                 updated_config.configure(**config)
                 default_config = updated_config
             elif isinstance(config, Config):
-                # If it's already a Config object, use it directly
                 default_config = config
             else:
-                raise ValueError(
-                    "Config must be either a dictionary or a Config object"
-                )
+                raise ValueError("Config must be either a dictionary or a Config object")
 
         if not conversation_config:
             conversation_config = load_conversation_config().to_dict()
-
-        main_config = default_config.config.get("main", {})
 
         # Use provided tts_model if specified, otherwise use the one from config
         if tts_model is None:
@@ -362,6 +375,8 @@ def generate_podcast(
             if url_file:
                 with open(url_file, "r") as file:
                     urls_list.extend([line.strip() for line in file if line.strip()])
+
+            urls_list = _norm_str_list(urls_list) or []
 
             if not urls_list and not image_paths and not text and not topic:
                 raise ValueError(
