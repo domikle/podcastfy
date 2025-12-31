@@ -114,39 +114,46 @@ def generate_podcast_endpoint(data: dict):
             or base_config.get("output_language", "English")
         )
 
-        tts_model = data.get(
-            "tts_model",
-            base_config.get("text_to_speech", {}).get("default_tts_model", "openai"),
-        )
-        tts_base_config = base_config.get("text_to_speech", {}).get(tts_model, {}) or {}
+tts_model = data.get(
+    "tts_model",
+    base_config.get("text_to_speech", {}).get("default_tts_model", "openai"),
+)
 
-        voices_in = data.get("voices", {}) or {}
-        default_voices = tts_base_config.get("default_voices", {}) or {}
+tts_root = base_config.get("text_to_speech", {}) or {}
+# model specific config lives under text_to_speech.<model>
+tts_model_cfg = (tts_root.get(tts_model, {}) or {})
 
-        q_voice = _parse_voice(voices_in.get("question")) or _parse_voice(default_voices.get("question"))
-        a_voice = _parse_voice(voices_in.get("answer")) or _parse_voice(default_voices.get("answer"))
+voices_in = data.get("voices", {}) or {}
+default_voices = (tts_model_cfg.get("default_voices", {}) or {})
 
-        user_config = {
-            "creativity": float(data.get("creativity", base_config.get("creativity", 0.7))),
-            "conversation_style": data.get("conversation_style", base_config.get("conversation_style", [])),
-            "roles_person1": data.get("roles_person1", base_config.get("roles_person1")),
-            "roles_person2": data.get("roles_person2", base_config.get("roles_person2")),
-            "dialogue_structure": data.get("dialogue_structure", base_config.get("dialogue_structure", [])),
-            # NOTE: API expects "name" (not podcast_name)
-            "podcast_name": data.get("name", base_config.get("podcast_name")),
-            "podcast_tagline": data.get("tagline", base_config.get("podcast_tagline")),
-            "output_language": output_language,
-            "user_instructions": data.get("user_instructions", base_config.get("user_instructions", "")),
-            "engagement_techniques": data.get("engagement_techniques", base_config.get("engagement_techniques", [])),
-            "text_to_speech": {
-                "default_tts_model": tts_model,
-                "model": tts_base_config.get("model"),
-                "default_voices": {
-                    "question": q_voice,
-                    "answer": a_voice,
-                },
+q_voice = _parse_voice(voices_in.get("question")) or _parse_voice(default_voices.get("question"))
+a_voice = _parse_voice(voices_in.get("answer")) or _parse_voice(default_voices.get("answer"))
+
+user_config = {
+    "creativity": float(data.get("creativity", base_config.get("creativity", 0.7))),
+    "conversation_style": data.get("conversation_style", base_config.get("conversation_style", [])),
+    "roles_person1": data.get("roles_person1", base_config.get("roles_person1")),
+    "roles_person2": data.get("roles_person2", base_config.get("roles_person2")),
+    "dialogue_structure": data.get("dialogue_structure", base_config.get("dialogue_structure", [])),
+    "podcast_name": data.get("name") or data.get("podcast_name") or base_config.get("podcast_name"),
+    "podcast_tagline": data.get("tagline", base_config.get("podcast_tagline")),
+    "output_language": output_language,
+    "user_instructions": data.get("user_instructions", base_config.get("user_instructions", "")),
+    "engagement_techniques": data.get("engagement_techniques", base_config.get("engagement_techniques", [])),
+    "text_to_speech": {
+        # keep default model selection
+        "default_tts_model": tts_model,
+        # IMPORTANT: override voices under the model key, e.g. text_to_speech.elevenlabs.default_voices
+        tts_model: {
+            **tts_model_cfg,
+            "default_voices": {
+                "question": q_voice,
+                "answer": a_voice,
             },
-        }
+        },
+    },
+}
+
 
         conversation_config = merge_configs(base_config, user_config)
 
